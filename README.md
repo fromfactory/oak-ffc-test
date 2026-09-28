@@ -9,7 +9,7 @@ The host computer runs the Python application, communicates with the OAK device,
 - Discover connected camera sockets and reported sensor and autofocus capabilities.
 - Select cameras, sensor-mode presets, and frame rates before starting a session.
 - View live previews with measured frame rates and frame metadata.
-- Use a compact live workspace with camera switching, capture actions, and tabbed camera controls.
+- Use a dark, compact live workspace with camera switching, capture actions, and tabbed camera controls.
 - Adjust exposure, ISO, white balance, focus, and image-processing controls, including automatic exposure/white-balance locks, an automatic-exposure time limit, lighting presets, and image effects.
 - Save JPEG, PNG, TIFF, BMP, and sensor RAW captures with JSON metadata.
 - Capture individual cameras or all active cameras, and download saved files.
@@ -141,6 +141,8 @@ Resolution and FPS changes rebuild the pipeline. Exposure duration must fit with
 ### Live workspace
 
 The live workspace keeps camera selection, previews, and capture actions together. Setup and saved-capture history open separately, so they do not push the live images down the page. Use **Setup** for camera selection, resolution, FPS, and RAW enablement; use **Captures** to review and download saved files. Close either dialog with its close button or **Escape**.
+
+The workspace shows the relevant **Start** or **Stop** action. Camera cards always show frame health and FPS; turn on **Details** to see exposure, ISO, white balance, lens position, and frame counts. Manual inputs appear when you choose a manual mode. Expand **More exposure options**, **More color options**, or **Sharpness & noise** for additional controls.
 
 Select a camera next to the previews to edit its settings. **Capture selected** saves that camera; **Capture all** saves each active camera sequentially. The control panel has four tabs:
 

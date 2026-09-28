@@ -1,4 +1,4 @@
-"""Exercise the compact workspace against an explicitly started demo server.
+"""Exercise the simplified workspace against an explicitly started demo server.
 
 Example: .venv/bin/python tests/browser_smoke.py http://127.0.0.1:8081
 """
@@ -52,6 +52,8 @@ def main():
         expect(page.locator('#demo-banner')).to_be_visible()
         expect(page.locator('.camera-config')).to_have_count(3, timeout=20000)
         expect(page.locator('#setup-dialog')).to_be_visible()
+        expect(page.locator('#start-button')).to_be_visible()
+        expect(page.locator('#stop-button')).to_be_hidden()
 
         # Native dialogs close on Escape and return focus to their launcher.
         page.keyboard.press('Escape')
@@ -99,6 +101,8 @@ def main():
             page.locator('#setup-start-button').click()
             expect(page.locator('#pipeline-state')).to_have_text('Running', timeout=20000)
             expect(page.locator('#setup-dialog')).not_to_be_visible()
+            expect(page.locator('#start-button')).to_be_hidden()
+            expect(page.locator('#stop-button')).to_be_visible()
             expect(page.locator('.camera-card')).to_have_count(count)
             page.wait_for_function("document.querySelectorAll('.preview.has-frame').length === " + str(count))
             page.wait_for_function("[...document.querySelectorAll('.camera-image')].every(i => i.naturalWidth > 0)")
@@ -106,12 +110,24 @@ def main():
             if count < 3:
                 page.locator('#stop-button').click()
                 expect(page.locator('#pipeline-state')).to_have_text('Stopped')
+                expect(page.locator('#start-button')).to_be_visible()
+                expect(page.locator('#stop-button')).to_be_hidden()
 
         def tab(name):
             page.locator(f'[data-control-tab="{name}"]').click()
 
         def camera(socket):
             page.locator(f'button[data-camera-socket="{socket}"]').click()
+
+        def advanced(name, opened=True):
+            details = page.locator(f'#panel-{name} details.advanced-controls')
+            if details.evaluate('(element) => element.open') != opened:
+                details.locator('summary').first.click()
+            if opened:
+                expect(details).to_have_attribute('open', '')
+            else:
+                expect(details).not_to_have_attribute('open', '')
+            return details
 
         def apply():
             with page.expect_response(lambda response: '/api/controls/' in response.url) as response:
@@ -125,6 +141,22 @@ def main():
             state = context.request.get(args.url + '/api/status').json()
             return next(c['controls'] for c in state['cameras'] if c['socket'] == socket)
 
+        # Keep the default workspace quiet without concealing frame health.
+        for name in ('exposure', 'color', 'image'):
+            details = page.locator(f'#panel-{name} details.advanced-controls')
+            expect(details).to_have_count(1)
+            expect(details).not_to_have_attribute('open', '')
+        expect(page.locator('#toggle-details')).to_have_attribute('aria-pressed', 'false')
+        for metadata in page.locator('.camera-metadata').all():
+            expect(metadata).to_be_hidden()
+        expect(page.locator('.camera-telemetry').first).to_be_visible()
+        page.locator('#toggle-details').click()
+        expect(page.locator('#toggle-details')).to_have_attribute('aria-pressed', 'true')
+        for metadata in page.locator('.camera-metadata').all():
+            expect(metadata).to_be_visible()
+        page.locator('#toggle-details').click()
+        expect(page.locator('.camera-metadata').first).to_be_hidden()
+
         page.locator('#view-selected').click()
         expect(page.locator('.camera-card:visible')).to_have_count(1)
         camera('CAM_D')
@@ -134,6 +166,8 @@ def main():
 
         camera('CAM_A')
         tab('exposure')
+        expect(page.locator('#manual-exposure-fields')).to_be_hidden()
+        advanced('exposure')
         page.locator('[name="auto_exposure_limit_us"]').fill('5000')
         page.locator('[name="exposure_lock"]').check()
         apply()
@@ -143,14 +177,17 @@ def main():
 
         # Keep an unapplied edit while changing cameras and receiving status polls.
         page.locator('#exposure-mode').select_option('manual')
+        expect(page.locator('#manual-exposure-fields')).to_be_visible()
         expect(page.locator('[name="exposure_lock"]')).not_to_be_checked()
         page.locator('#exposure-number').fill('5000')
         page.locator('#iso-number').fill('200')
         camera('CAM_D')
         expect(page.locator('#exposure-mode')).to_have_value('auto')
+        expect(page.locator('#manual-exposure-fields')).to_be_hidden()
         camera('CAM_A')
         page.wait_for_timeout(1800)
         expect(page.locator('#exposure-mode')).to_have_value('manual')
+        expect(page.locator('#manual-exposure-fields')).to_be_visible()
         expect(page.locator('#exposure-number')).to_have_value('5000')
         apply()
         assert controls()['exposure_mode'] == 'manual'
@@ -160,7 +197,9 @@ def main():
         assert controls('CAM_D')['exposure_mode'] == 'auto'
 
         tab('color')
+        expect(page.locator('#manual-white-balance-fields')).to_be_hidden()
         page.locator('#white-balance-mode').select_option('daylight')
+        expect(page.locator('#manual-white-balance-fields')).to_be_hidden()
         expect(page.locator('[name="white_balance_lock"]')).to_be_disabled()
         apply()
         assert controls()['white_balance_mode'] == 'daylight'
@@ -169,6 +208,7 @@ def main():
         apply()
         assert controls()['white_balance_lock'] is True
         page.locator('#white-balance-mode').select_option('manual')
+        expect(page.locator('#manual-white-balance-fields')).to_be_visible()
         expect(page.locator('[name="white_balance_lock"]')).not_to_be_checked()
         page.locator('#white-balance-number').fill('5600')
         apply()
@@ -176,7 +216,9 @@ def main():
         assert controls()['white_balance_lock'] is False
 
         tab('focus')
+        expect(page.locator('#manual-focus-fields')).to_be_hidden()
         page.locator('#focus-mode').select_option('manual')
+        expect(page.locator('#manual-focus-fields')).to_be_visible()
         page.locator('#focus-number').fill('155')
         apply()
         assert controls()['focus'] == 155
@@ -185,6 +227,11 @@ def main():
         apply()
         assert controls()['effect_mode'] == 'mono'
         assert controls('CAM_D')['effect_mode'] == 'off'
+        advanced('image')
+        page.locator('[name="luma_denoise"]').fill('2')
+        assert apply() == {'luma_denoise': 2}
+        assert controls()['luma_denoise'] == 2
+        advanced('image', opened=False)
         page.locator('[name="brightness"]').fill('2')
         expect(page.locator('#reset-controls')).to_be_enabled()
         page.locator('#reset-controls').click()
@@ -196,6 +243,7 @@ def main():
         assert remote.ok
         expect(page.locator('[name="brightness"]')).to_have_value('3', timeout=10000)
         tab('color')
+        advanced('color')
         page.locator('[name="saturation"]').fill('2')
         camera('CAM_A')
         remote = context.request.post(args.url + '/api/controls/CAM_D', data={'brightness': 4})
@@ -209,6 +257,7 @@ def main():
         camera('CAM_A')
         tab('focus')
         page.locator('#focus-mode').select_option('auto')
+        expect(page.locator('#manual-focus-fields')).to_be_hidden()
         assert apply() == {'focus_mode': 'auto'}
         with page.expect_response(lambda response: '/api/controls/' in response.url) as response:
             page.locator('#trigger-autofocus').click()
@@ -225,6 +274,22 @@ def main():
         expect(page.locator('[data-control-tab="exposure"]')).to_have_attribute('aria-selected', 'true')
         expect(page.locator('#exposure-number')).to_be_focused()
         page.locator('#reset-controls').click()
+
+        # A collapsed advanced section must open when it contains an invalid edit.
+        page.locator('#exposure-mode').select_option('auto')
+        expect(page.locator('#manual-exposure-fields')).to_be_hidden()
+        details = advanced('exposure')
+        page.locator('[name="auto_exposure_limit_us"]').fill('100001')
+        advanced('exposure', opened=False)
+        tab('color')
+        page.locator('#apply-controls').click()
+        expect(page.locator('[data-control-tab="exposure"]')).to_have_attribute('aria-selected', 'true')
+        expect(details).to_have_attribute('open', '')
+        expect(page.locator('[name="auto_exposure_limit_us"]')).to_be_focused()
+        assert controls()['exposure_mode'] == 'manual'
+        assert controls()['auto_exposure_limit_us'] == 5000
+        page.locator('#reset-controls').click()
+        expect(page.locator('#manual-exposure-fields')).to_be_visible()
 
         # The primary actions remain accessible across viewport sizes and tabs.
         for width, height in ((1366, 768), (1024, 768), (800, 600), (390, 844)):
@@ -263,13 +328,15 @@ def main():
         expect(page.locator('#open-captures')).to_be_focused()
         page.locator('#stop-button').click()
         expect(page.locator('#pipeline-state')).to_have_text('Stopped')
+        expect(page.locator('#start-button')).to_be_visible()
+        expect(page.locator('#stop-button')).to_be_hidden()
         page.locator('#open-setup').click()
         page.locator('#scan-button').click()
         expect(page.locator('#notice')).to_contain_text('3 cameras discovered')
         page.locator('#close-setup').click()
         assert not errors, errors
         browser.close()
-    print('Browser smoke passed: compact viewport layouts, setup/history dialogs, camera switching/drafts, extended controls, captures/downloads, and restart.')
+    print('Browser smoke passed: compact layouts, automatic/manual visibility, advanced controls, metadata toggle, dialogs, camera drafts, extended controls, captures/downloads, and restart.')
 
 
 if __name__ == '__main__':

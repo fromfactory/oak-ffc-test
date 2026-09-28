@@ -2,7 +2,7 @@
 
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = {status: null, selected: new Set(), configs: new Map(), cards: new Map(), drafts: new Map(), formBaseline: {}, active: "", dirty: false, busy: false, polling: false, captureKey: "", streamEpoch: 0, seenSockets: "", noticeTimer: null, controlTab: "exposure", selectedView: false, initialSetupOpened: false};
+  const state = {status: null, selected: new Set(), configs: new Map(), cards: new Map(), drafts: new Map(), formBaseline: {}, active: "", dirty: false, busy: false, streamAction: null, polling: false, captureKey: "", streamEpoch: 0, seenSockets: "", noticeTimer: null, controlTab: "exposure", selectedView: false, initialSetupOpened: false};
   const resolutions = {"1080p": "1920 × 1080", "4k": "3840 × 2160", "12mp": "12 MP sensor mode"};
   const resolutionOrder = ["1080p", "4k", "12mp"];
   const resolutionWarning = "CAM_A and CAM_D need matching sensor resolutions with this DepthAI version. Choose the same mode before starting.";
@@ -112,14 +112,17 @@
 
   function updateEnabled() {
     const running = Boolean(state.status?.running), locked = state.busy || running;
+    const showStart = state.streamAction ? state.streamAction === "start" : !running;
+    $("start-button").hidden = !showStart;
+    $("stop-button").hidden = showStart;
     $("scan-button").disabled = locked;
     $("start-button").disabled = locked || !state.selected.size || hasResolutionConflict();
     $("setup-start-button").disabled = $("start-button").disabled;
     $("match-resolutions").disabled = locked || new Set(selectedConfigurations().map(config => config.resolution)).size < 2;
     $("stop-button").disabled = state.busy || !running;
     $("setup-stop-button").disabled = $("stop-button").disabled;
-    $("setup-start-button").hidden = running;
-    $("setup-stop-button").hidden = !running;
+    $("setup-start-button").hidden = !showStart;
+    $("setup-stop-button").hidden = showStart;
     $("setup-state-help").textContent = running ? "Stop streams to edit the configuration." : "Changes take effect when streams start.";
     $("raw-enabled").disabled = locked;
     document.querySelectorAll("[data-preset]").forEach(button => { button.disabled = locked || cameras().length < Number(button.dataset.preset); });
@@ -144,10 +147,13 @@
   function updateControlModes() {
     const camera = selectedCamera(), stopped = !state.status?.running || state.busy || !camera;
     const exposureAuto = $("exposure-mode").value !== "manual";
+    if ($("manual-exposure-fields")) $("manual-exposure-fields").hidden = exposureAuto;
     ["exposure-us", "exposure-number", "iso", "iso-number"].forEach(id => { $(id).disabled = stopped || exposureAuto; });
     const wbAuto = $("white-balance-mode").value !== "manual";
+    if ($("manual-white-balance-fields")) $("manual-white-balance-fields").hidden = wbAuto;
     ["white-balance-kelvin", "white-balance-number"].forEach(id => { $(id).disabled = stopped || wbAuto; });
     const hasFocus = camera?.autofocus === true;
+    if ($("manual-focus-fields")) $("manual-focus-fields").hidden = $("focus-mode").value !== "manual";
     $("focus-mode").disabled = stopped || !hasFocus;
     $("trigger-autofocus").hidden = $("focus-mode").value !== "auto" || !hasFocus;
     $("trigger-autofocus").disabled = stopped || !hasFocus;
@@ -374,6 +380,10 @@
   document.querySelectorAll("dialog").forEach(dialog => { dialog.addEventListener("close", syncFeedbackHost); });
   $("view-all").addEventListener("click", () => { state.selectedView = false; renderCameraSelection(); });
   $("view-selected").addEventListener("click", () => { state.selectedView = true; renderCameraSelection(); });
+  $("toggle-details")?.addEventListener("click", () => {
+    const visible = document.body.classList.toggle("show-frame-details");
+    $("toggle-details").setAttribute("aria-pressed", String(visible));
+  });
   document.querySelectorAll("[data-control-tab]").forEach(button => {
     button.addEventListener("click", () => setControlTab(button.dataset.controlTab));
     button.addEventListener("keydown", event => {
@@ -400,12 +410,19 @@
     if (hasResolutionConflict()) throw new Error(resolutionWarning);
     const selected = cameras().filter(camera => state.selected.has(camera.socket)).map(camera => ({socket: camera.socket, ...configFor(camera)}));
     for (const camera of selected) { if (!Number.isInteger(camera.fps) || camera.fps < 2 || camera.fps > 30) throw new Error(`${camera.socket}: enter a whole-number frame rate between 2 and 30 fps.`); }
+    state.streamAction = "start"; updateEnabled();
     $("start-button").textContent = "Starting…";
     $("setup-start-button").textContent = "Starting…";
-    try { const result = await api("/api/start", {cameras: selected, raw_enabled: $("raw-enabled").checked}); if (result.cameras) renderStatus(result); else await refresh(); if ($("setup-dialog").open) $("setup-dialog").close(); notice("Streams started. Select a camera to adjust its image."); }
-    finally { $("start-button").replaceChildren(node("span", "", "▶"), document.createTextNode(" Start")); $("setup-start-button").textContent = "Start streams"; }
+    try { const result = await api("/api/start", {cameras: selected, raw_enabled: $("raw-enabled").checked}); if (result.cameras) renderStatus(result); else await refresh(); if ($("setup-dialog").open) $("setup-dialog").close(); notice("Streams started."); }
+    finally { state.streamAction = null; $("start-button").replaceChildren(node("span", "", "▶"), document.createTextNode(" Start")); $("setup-start-button").textContent = "Start streams"; }
   }
-  async function stopStreams() { const result = await api("/api/stop", {}); if (result.cameras) renderStatus(result); else await refresh(); notice("Streams stopped. Open Setup to change cameras and resolution."); }
+  async function stopStreams() {
+    state.streamAction = "stop"; updateEnabled();
+    $("stop-button").textContent = "Stopping…";
+    $("setup-stop-button").textContent = "Stopping…";
+    try { const result = await api("/api/stop", {}); if (result.cameras) renderStatus(result); else await refresh(); notice("Streams stopped."); }
+    finally { state.streamAction = null; $("stop-button").replaceChildren(node("span", "", "■"), document.createTextNode(" Stop")); $("setup-stop-button").textContent = "Stop streams"; }
+  }
   $("start-button").addEventListener("click", () => action(startStreams));
   $("setup-start-button").addEventListener("click", () => action(startStreams));
   $("stop-button").addEventListener("click", () => action(stopStreams));
@@ -430,7 +447,14 @@
   $("controls-form").addEventListener("submit", event => {
     event.preventDefault();
     const invalid = $("controls-form").querySelector("input:invalid, select:invalid");
-    if (invalid) { const panel = invalid.closest(".control-tab-panel"); if (panel) setControlTab(panel.id.replace("panel-", "")); $("controls-form").reportValidity(); return; }
+    if (invalid) {
+      const panel = invalid.closest(".control-tab-panel");
+      if (panel) setControlTab(panel.id.replace("panel-", ""));
+      for (let ancestor = invalid.parentElement; ancestor && ancestor !== $("controls-form"); ancestor = ancestor.parentElement) {
+        if (ancestor.tagName === "DETAILS") ancestor.open = true;
+      }
+      $("controls-form").reportValidity(); return;
+    }
     const values = {};
     const baseline = state.formBaseline;
     $("controls-form").querySelectorAll("[name]").forEach(input => { if (!input.disabled) { const value = input.type === "checkbox" ? input.checked : numericControls.has(input.name) ? Number(input.value) : input.value; if (value !== baseline[input.name]) values[input.name] = value; } });
