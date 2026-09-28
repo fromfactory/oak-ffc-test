@@ -1,0 +1,6 @@
+# This application uses the DepthAI v2 API (v3 is not interchangeable).
+depthai==2.30.0.0
+Flask>=3.1,<4
+numpy>=1.26,<3
+opencv-python-headless>=4.10,<5
+Pillow>=10,<13
