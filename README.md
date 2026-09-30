@@ -4,6 +4,8 @@ A local browser application for exploring and testing the **OAK-FFC 4P USB platf
 
 The host computer runs the Python application, communicates with the OAK device, and stores images. The browser provides the interface. The project is intended for camera bring-up, module and cable checks, image-quality experiments, and configuration comparisons.
 
+![OAK FFC TEST main web panel](docs/images/main.png)
+
 ## Features
 
 - Discover connected camera sockets and reported sensor and autofocus capabilities.
