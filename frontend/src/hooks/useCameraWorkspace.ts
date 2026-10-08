@@ -192,7 +192,7 @@ export function useCameraWorkspace() {
 
   return {
     ...state, cameras, streams, busy, initialized, streamAction, error, notice, connected, warnings, hasResolutionConflict,
-    start, stop, capture, setError,
+    start, stop, capture, setError, runAction, refresh, showNotice,
     dismissError: () => setError(''),
     scan: () => runAction(async () => { const status = await api.scan(); acceptStatus(status); showNotice(`${status.cameras.length} ${status.cameras.length === 1 ? 'camera' : 'cameras'} discovered.`); }),
     onSelect: (socket: string, selected: boolean) => {

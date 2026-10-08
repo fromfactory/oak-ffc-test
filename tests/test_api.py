@@ -1,8 +1,11 @@
 """Exercise HTTP boundaries with an injected backend; never open a USB device."""
 
 from copy import deepcopy
+import io
 import json
+from pathlib import Path
 from types import SimpleNamespace
+import zipfile
 
 import pytest
 
@@ -351,3 +354,227 @@ def test_status_keeps_local_details_and_report_exports_technical_health(api):
     assert report["python"] and report["platform"] and report["generated_at"]
     assert "depthai" in report["packages"]
     assert "sequential" in report["note"]
+
+
+def saved(api, count=1, fmt="raw"):
+    """Create isolated fixture files directly without starting hardware."""
+    store = api.app.extensions["capture_store"]
+    return [store.save("CAM_A", fmt, api.backend.capture("CAM_A", fmt)) for _ in range(count)]
+
+
+def test_capture_library_lists_all_and_status_keeps_recent_fifty_with_total(api):
+    records = saved(api, count=56)
+    assert api.client.get("/api/captures").json["captures"] == list(reversed(records))
+    status = api.client.get("/api/status").json
+    assert status["captures"] == list(reversed(records))[:50]
+    assert status["capture_count"] == 56
+    result = api.client.post("/api/captures/delete", json={"all": True})
+    assert result.status_code == 200
+    assert set(result.json["deleted"]) == {record["id"] for record in records}
+    assert result.json["capture_count"] == 0
+    assert result.json["captures"] == []
+    assert list(api.root.iterdir()) == []
+
+
+@pytest.mark.parametrize("endpoint", ["delete", "download"])
+@pytest.mark.parametrize("selection", [
+    {}, [], {"all": False}, {"all": 1}, {"all": "true"},
+    {"ids": []}, {"ids": "capture"}, {"ids": [None]}, {"ids": [1]},
+    {"ids": ["../outside"]}, {"ids": [".pending-test"]},
+    {"ids": ["id", "id"]}, {"ids": ["id"], "all": True},
+    {"ids": ["id"], "path": "arbitrary"}, {"all": True, "ids": []},
+])
+def test_capture_bulk_endpoints_reject_invalid_selectors_without_changes(api, endpoint, selection):
+    record, = saved(api)
+    before = set((api.root / record["id"]).iterdir())
+    response = api.client.post(f"/api/captures/{endpoint}", json=selection)
+    assert response.status_code == 400
+    assert set((api.root / record["id"]).iterdir()) == before
+
+
+@pytest.mark.parametrize("endpoint", ["delete", "download", "download?prepare=1"])
+def test_capture_bulk_endpoints_reject_cross_origin_and_unknown_ids(api, endpoint):
+    record, = saved(api)
+    url = f"/api/captures/{endpoint}"
+    assert api.client.post(url, json={"all": True}, headers={"Origin": "https://attacker.example"}).status_code == 403
+    assert api.client.post(url, json={"ids": [record["id"], "unknown"]}).status_code == 404
+    assert api.client.get("/api/captures").json["captures"] == [record]
+
+
+def test_subset_delete_retains_other_images_and_sidecars(api):
+    records = saved(api, count=3)
+    response = api.client.post("/api/captures/delete", json={"ids": [records[0]["id"], records[2]["id"]]})
+    assert response.status_code == 200
+    assert response.json == {"deleted": [records[0]["id"], records[2]["id"]],
+                             "captures": [records[1]], "capture_count": 1}
+    assert api.client.get(records[0]["files"][0]["url"]).status_code == 404
+    assert api.client.get(records[1]["files"][0]["url"]).data == b"native-camera-bytes"
+
+
+def test_partial_delete_failure_returns_completed_ids_and_refreshed_library(api, monkeypatch):
+    records = saved(api, count=3)
+    original = Path.unlink
+
+    def fail(path, *args, **kwargs):
+        if path.parent.name == records[1]["id"]:
+            raise PermissionError("permission denied")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail)
+    response = api.client.post("/api/captures/delete", json={"ids": [record["id"] for record in records]})
+    assert response.status_code == 507
+    assert response.json["deleted"] == [records[0]["id"]]
+    assert response.json["failed"] == [records[1]["id"]]
+    assert response.json["captures"] == list(reversed(records[1:]))
+    assert response.json["capture_count"] == 2
+    assert "1 capture(s) permanently deleted" in response.json["error"]
+
+
+@pytest.mark.parametrize("all_captures", [False, True])
+def test_download_zip_includes_every_selected_image_metadata_and_no_record(api, all_captures):
+    records = saved(api, count=54)
+    chosen = records if all_captures else [records[0], records[3], records[53]]
+    selection = {"all": True} if all_captures else {"ids": [record["id"] for record in chosen]}
+    response = api.client.post("/api/captures/download", json=selection)
+    try:
+        assert response.status_code == 200
+        assert response.mimetype == "application/zip"
+        assert "attachment;" in response.headers["Content-Disposition"]
+        assert response.headers["Cache-Control"] == "no-store"
+        with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+            assert set(archive.namelist()) == {f"{record['id']}/{file['name']}" for record in chosen for file in record["files"]}
+            assert archive.read(f"{chosen[0]['id']}/image.raw") == b"native-camera-bytes"
+            assert json.loads(archive.read(f"{chosen[0]['id']}/metadata.json")) == chosen[0]["metadata"]
+        assert response.content_length == len(response.data)
+        assert api.client.get("/api/status").json["capture_count"] == 54
+    finally:
+        response.close()
+
+
+def test_prepared_download_streams_once_and_cleans_up_archive(api):
+    record, = saved(api)
+    prepare = api.client.post("/api/captures/download?prepare=1", json={"ids": [record["id"]]})
+    assert prepare.status_code == 200
+    assert prepare.json["count"] == 1
+    assert prepare.json["filename"].endswith(".zip")
+    url = prepare.json["download_url"]
+    token = url.rsplit("/", 1)[1]
+    archive = api.app.extensions["capture_archives"][token]["file"]
+    assert not archive.closed
+    response = api.client.get(url)
+    try:
+        assert response.status_code == 200
+        assert response.mimetype == "application/zip"
+        assert response.content_length == len(response.data)
+        with zipfile.ZipFile(io.BytesIO(response.data)) as contents:
+            assert contents.read(f"{record['id']}/image.raw") == b"native-camera-bytes"
+        assert api.app.extensions["capture_archives"] == {}
+        assert api.client.get(url).status_code == 404
+    finally:
+        response.close()
+    assert archive.closed
+
+
+def test_expired_download_cleans_up_archive_and_requests_can_be_prepared_again(api):
+    saved(api)
+    prepare = api.client.post("/api/captures/download?prepare=1", json={"all": True})
+    url = prepare.json["download_url"]
+    pending = api.app.extensions["capture_archives"][url.rsplit("/", 1)[1]]
+    pending["expires"] = 0
+    assert api.client.get(url).status_code == 404
+    assert pending["file"].closed
+    assert api.app.extensions["capture_archives"] == {}
+
+
+def test_abandoned_prepared_download_timer_closes_archive(api):
+    saved(api)
+    prepare = api.client.post("/api/captures/download?prepare=1", json={"all": True})
+    token = prepare.json["download_url"].rsplit("/", 1)[1]
+    pending = api.app.extensions["capture_archives"][token]
+    timer = pending["timer"]
+    timer.cancel()
+    timer.function(*timer.args, **timer.kwargs)
+    assert pending["file"].closed
+    assert api.app.extensions["capture_archives"] == {}
+    assert api.client.get(prepare.json["download_url"]).status_code == 404
+
+
+@pytest.mark.parametrize("extension", ["jpg", "png", "tiff", "bmp"])
+def test_processed_capture_thumbnail_has_small_browser_supported_jpeg(api, extension):
+    import cv2
+    import numpy as np
+
+    image = np.zeros((600, 1200, 3), dtype=np.uint8)
+    image[:, :, 1] = 120
+    ok, encoded = cv2.imencode(f".{extension}", image)
+    assert ok
+    record = api.app.extensions["capture_store"].save(
+        "CAM_A", "jpeg" if extension == "jpg" else extension,
+        {"extension": extension, "data": encoded.tobytes(), "metadata": {"width": 1200, "height": 600}},
+    )
+    response = api.client.get(f"/captures/{record['id']}/thumbnail")
+    assert response.status_code == 200
+    assert response.mimetype == "image/jpeg"
+    assert "attachment" not in response.headers.get("Content-Disposition", "")
+    thumbnail = cv2.imdecode(np.frombuffer(response.data, dtype=np.uint8), cv2.IMREAD_COLOR)
+    assert thumbnail.shape[:2] == (160, 320)
+    assert response.headers["Cache-Control"] == "private, max-age=86400"
+
+
+def test_thumbnail_rejects_raw_invalid_encoded_images_and_symlinks(api):
+    raw, = saved(api)
+    invalid, = saved(api, fmt="png")
+    for record in (raw, invalid):
+        assert api.client.get(f"/captures/{record['id']}/thumbnail").status_code == 404
+    (api.root / invalid["id"] / "image.png").unlink()
+    outside = api.tmp / "image.png"
+    outside.write_bytes(b"private")
+    (api.root / invalid["id"] / "image.png").symlink_to(outside)
+    assert api.client.get(f"/captures/{invalid['id']}/thumbnail").status_code == 400
+    assert api.client.get("/captures/.pending-test/thumbnail").status_code == 400
+    assert api.client.get("/captures/missing/thumbnail").status_code == 404
+
+
+@pytest.mark.parametrize("target", ["directory", "record"])
+def test_thumbnail_rejects_symlinked_directories_and_private_records(api, target):
+    record, = saved(api, fmt="png")
+    directory = api.root / record["id"]
+    if target == "directory":
+        destination = api.tmp / "outside-capture"
+        directory.rename(destination)
+        directory.symlink_to(destination, target_is_directory=True)
+    else:
+        destination = api.tmp / "outside-record.json"
+        (directory / "record.json").rename(destination)
+        (directory / "record.json").symlink_to(destination)
+    response = api.client.get(f"/captures/{record['id']}/thumbnail")
+    assert response.status_code in {400, 404}
+
+
+@pytest.mark.parametrize("name", ["metadata.json", "image.raw"])
+def test_bulk_download_validates_missing_files_before_creating_archive(api, name):
+    records = saved(api, count=2)
+    (api.root / records[1]["id"] / name).unlink()
+    response = api.client.post("/api/captures/download?prepare=1", json={"all": True})
+    assert response.status_code == 404
+    assert api.app.extensions["capture_archives"] == {}
+    assert api.client.get("/api/status").json["capture_count"] == 2
+    assert api.client.post("/api/captures/delete", json={"all": True}).json["capture_count"] == 0
+
+
+def test_empty_bulk_library_deletes_safely_and_download_is_not_created(api):
+    assert api.client.post("/api/captures/delete", json={"all": True}).json == {
+        "deleted": [], "captures": [], "capture_count": 0,
+    }
+    assert api.client.post("/api/captures/download", json={"all": True}).status_code == 400
+    assert api.app.extensions["capture_archives"] == {}
+
+
+def test_large_capture_id_selection_keeps_camera_request_limit_small(api):
+    records = saved(api, count=400)
+    ids = [record["id"] for record in records]
+    assert len(json.dumps({"ids": ids})) > 16 * 1024
+    response = api.client.post("/api/captures/delete", json={"ids": ids})
+    assert response.status_code == 200
+    assert len(response.json["deleted"]) == 400
+    assert api.client.post("/api/stop", json={"padding": "x" * (17 * 1024)}).status_code == 413

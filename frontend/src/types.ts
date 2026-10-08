@@ -49,6 +49,19 @@ export interface Capture {
   format: CaptureFormat;
   created_at: string;
   files: { name: string; size: number; url: string }[];
+  metadata?: Record<string, unknown>;
+}
+
+export type CaptureSelection = { ids: string[] } | { all: true };
+export interface CaptureCollection { captures: Capture[] }
+export interface CaptureDeleteResult extends CaptureCollection {
+  deleted: string[];
+  capture_count: number;
+}
+export interface CaptureArchive {
+  download_url: string;
+  filename: string;
+  count: number;
 }
 
 export interface CameraStatus {
@@ -61,6 +74,7 @@ export interface CameraStatus {
   warnings?: string[];
   error?: string | null;
   captures: Capture[];
+  capture_count?: number;
   capture_directory?: string;
   version?: string;
 }

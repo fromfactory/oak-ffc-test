@@ -6,18 +6,20 @@ import json
 import logging
 from pathlib import Path
 import platform
+import secrets
 import threading
 import time
 from urllib.parse import urlsplit
+import weakref
 
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_file, send_from_directory
 from werkzeug.exceptions import HTTPException
 
 from . import __version__
 from .diagnostics import build_diagnostics
-from .storage import CaptureStore
+from .storage import CaptureDeletionError, CaptureNotFound, CaptureStore
 from .validation import (object_body, socket_name, validate_capture,
-                         validate_config, validate_controls)
+                         validate_capture_selection, validate_config, validate_controls)
 
 
 def create_app(backend=None, capture_dir="captures", demo=False, device_id=None):
@@ -30,14 +32,33 @@ def create_app(backend=None, capture_dir="captures", demo=False, device_id=None)
     store = CaptureStore(capture_dir)
     mutations = threading.Lock()
     events = deque(maxlen=100)
-    app.extensions.update(camera_backend=backend, capture_store=store)
+    archives = {}
+    archive_lock = threading.Lock()
+    app.extensions.update(camera_backend=backend, capture_store=store, capture_archives=archives)
+
+    def expire_archive(token):
+        with archive_lock:
+            pending = archives.pop(token, None)
+        if pending:
+            pending["file"].close()
+
+    def close_archives():
+        with archive_lock:
+            pending = list(archives.values())
+            archives.clear()
+        for item in pending:
+            item["timer"].cancel()
+            item["file"].close()
+
+    weakref.finalize(app, close_archives)
 
     def event(action, **details):
         events.append({"time": datetime.now(timezone.utc).isoformat(),
                        "action": action, **details})
 
     def status():
-        return {**backend.status(), "demo": demo, "captures": store.list(),
+        captures, count = store.snapshot()
+        return {**backend.status(), "demo": demo, "captures": captures, "capture_count": count,
                 "capture_directory": str(store.root), "version": __version__}
 
     def body():
@@ -47,6 +68,8 @@ def create_app(backend=None, capture_dir="captures", demo=False, device_id=None)
 
     @app.before_request
     def check_origin():
+        if request.path in {"/api/captures/delete", "/api/captures/download"}:
+            request.max_content_length = 1024 * 1024
         if request.method == "POST":
             origin = request.headers.get("Origin")
             if origin and urlsplit(origin).netloc != request.host:
@@ -64,6 +87,8 @@ def create_app(backend=None, capture_dir="captures", demo=False, device_id=None)
     def error(exc):
         if isinstance(exc, HTTPException):
             code = exc.code
+        elif isinstance(exc, CaptureNotFound):
+            code = 404
         elif isinstance(exc, ValueError):
             code = 400
         elif isinstance(exc, (RuntimeError, TimeoutError)):
@@ -162,18 +187,79 @@ def create_app(backend=None, capture_dir="captures", demo=False, device_id=None)
 
     @app.get("/api/captures")
     def captures():
-        return jsonify(captures=store.list())
+        return jsonify(captures=store.list(limit=None))
+
+    @app.post("/api/captures/delete")
+    def delete_captures():
+        ids = validate_capture_selection(body())
+        with mutations:
+            try:
+                deleted = store.delete(ids)
+            except CaptureDeletionError as exc:
+                remaining, count = store.snapshot(limit=None)
+                event("capture_delete_failed", deleted=exc.deleted, id=exc.capture_id, error=str(exc))
+                return jsonify(error=str(exc), deleted=exc.deleted, failed=[exc.capture_id],
+                               captures=remaining, capture_count=count), 507
+            remaining, count = store.snapshot(limit=None)
+            event("capture_delete", deleted=deleted)
+        return jsonify(deleted=deleted, captures=remaining, capture_count=count)
+
+    def archive_response(archive, filename):
+        try:
+            # A file object prevents Flask from delegating temporary-file lifetime
+            # to X-Sendfile. The WSGI file wrapper and close callback release it.
+            response = send_file(archive, mimetype="application/zip", as_attachment=True,
+                                 download_name=filename, conditional=False)
+            response.content_length = archive.seek(0, 2)
+            archive.seek(0)
+            response.call_on_close(archive.close)
+            return response
+        except BaseException:
+            archive.close()
+            raise
+
+    @app.post("/api/captures/download")
+    def download_captures():
+        ids = validate_capture_selection(body())
+        with mutations:
+            archive = store.archive(ids)
+            count = len(ids) if ids is not None else store.snapshot()[1]
+        filename = "oak-captures-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + ".zip"
+        if request.args.get("prepare") == "1":
+            token = secrets.token_urlsafe(32)
+            timer = threading.Timer(300, expire_archive, args=(token,))
+            timer.daemon = True
+            with archive_lock:
+                archives[token] = {"file": archive, "filename": filename,
+                                   "expires": time.monotonic() + 300, "timer": timer}
+            timer.start()
+            return jsonify(download_url=f"/api/captures/download/{token}", filename=filename, count=count)
+        return archive_response(archive, filename)
+
+    @app.get("/api/captures/download/<token>")
+    def download_prepared_captures(token):
+        with archive_lock:
+            pending = archives.pop(token, None)
+        if not pending:
+            raise CaptureNotFound("This download expired or has already been used. Prepare it again.")
+        pending["timer"].cancel()
+        if pending["expires"] <= time.monotonic():
+            pending["file"].close()
+            raise CaptureNotFound("This download expired. Prepare it again.")
+        return archive_response(pending["file"], pending["filename"])
+
+    @app.get("/captures/<capture_id>/thumbnail")
+    def thumbnail(capture_id):
+        jpeg = store.thumbnail(capture_id)
+        return Response(jpeg, mimetype="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 
     @app.get("/captures/<capture_id>/<name>")
     def download(capture_id, name):
-        if name not in {"image.jpg", "image.jpeg", "image.png", "image.tiff", "image.tif", "image.bmp", "image.raw", "metadata.json"}:
+        try:
+            target = store.file(capture_id, name)
+        except (ValueError, CaptureNotFound):
             return jsonify(error="Unknown capture file."), 404
-        # Validate the complete relative path against the capture root, including symlinks.
-        target = (store.root / capture_id / name).resolve()
-        if not target.is_relative_to(store.root) or capture_id.startswith("."):
-            return jsonify(error="Unknown capture file."), 404
-        return send_from_directory(store.root, f"{capture_id}/{name}", as_attachment=True,
-                                   download_name=f"{capture_id}_{name}")
+        return send_file(target, as_attachment=True, download_name=f"{capture_id}_{name}")
 
     @app.get("/stream/<socket>")
     def stream(socket):

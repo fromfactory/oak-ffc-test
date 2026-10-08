@@ -1,5 +1,7 @@
 """Validate browser input before passing it to the camera worker."""
 
+import re
+
 SOCKETS = {"CAM_A", "CAM_B", "CAM_C", "CAM_D"}
 FORMATS = {"jpeg", "png", "tiff", "bmp", "raw"}
 RESOLUTIONS = {"1080p", "4k", "12mp"}
@@ -20,6 +22,30 @@ RANGES = {
     "contrast": (-10, 10), "saturation": (-10, 10),
     "sharpness": (0, 4), "luma_denoise": (0, 4), "chroma_denoise": (0, 4),
 }
+
+CAPTURE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}\Z")
+
+
+def capture_id(value):
+    if not isinstance(value, str) or not CAPTURE_ID.fullmatch(value):
+        raise ValueError("Choose a valid saved capture ID.")
+    return value
+
+
+def validate_capture_selection(value):
+    """An explicit list or the whole library, never an ambiguous selection."""
+    value = object_body(value)
+    if set(value) == {"all"} and value["all"] is True:
+        return None
+    if set(value) != {"ids"}:
+        raise ValueError("Choose saved capture IDs or use all: true.")
+    ids = value["ids"]
+    if not isinstance(ids, list) or not ids:
+        raise ValueError("Select at least one saved capture.")
+    ids = [capture_id(item) for item in ids]
+    if len(set(ids)) != len(ids):
+        raise ValueError("Saved capture IDs must be unique.")
+    return ids
 
 
 def object_body(value):

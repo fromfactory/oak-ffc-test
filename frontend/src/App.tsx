@@ -4,6 +4,7 @@ import { CapturesDialog } from './components/CapturesDialog';
 import { ControlsPanel } from './components/ControlsPanel';
 import { SetupDialog } from './components/SetupDialog';
 import { useCameraWorkspace } from './hooks/useCameraWorkspace';
+import { useCaptureLibrary } from './hooks/useCaptureLibrary';
 import type { CaptureFormat } from './types';
 import { socketLabel } from './utils';
 
@@ -12,6 +13,10 @@ export default function App() {
   const [dialog, setDialog] = useState<'setup' | 'captures' | null>(null);
   const [format, setFormat] = useState<CaptureFormat>('jpeg');
   const [drafts, setDrafts] = useState<string[]>([]);
+  const library = useCaptureLibrary({
+    open: dialog === 'captures', busy: workspace.busy, runAction: workspace.runAction,
+    refreshStatus: workspace.refresh, showNotice: workspace.showNotice, onError: workspace.setError,
+  });
   const initialSetupOpened = useRef(false);
   const running = Boolean(workspace.status?.running);
   const rawAvailable = running && Boolean(workspace.status?.raw_enabled);
@@ -60,8 +65,8 @@ export default function App() {
         <button type="button" className="button button-header" id="open-setup" aria-haspopup="dialog" onClick={() => setDialog('setup')}>
           <svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6m8 4v6" /></svg>Setup
         </button>
-        <button type="button" className="button button-header" id="open-captures" aria-haspopup="dialog" onClick={() => setDialog('captures')}>
-          <svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2-3h9v16H3z" /></svg>Captures <span className="count-badge" id="capture-count">{workspace.status?.captures.length || 0}</span>
+        <button type="button" className="button button-header" id="open-captures" aria-haspopup="dialog" onClick={() => { workspace.dismissError(); setDialog('captures'); }}>
+          <svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2-3h9v16H3z" /></svg>Captures <span className="count-badge" id="capture-count">{dialog === 'captures' && library.loaded ? library.captures.length : workspace.status?.capture_count ?? workspace.status?.captures.length ?? 0}</span>
         </button>
         <button type="button" className="button button-stop" id="stop-button" hidden={showStart} disabled={workspace.busy || !running}
           onClick={() => invoke(workspace.stop)}><span aria-hidden="true">■</span><span>{workspace.streamAction === 'stop' ? 'Stopping…' : 'Stop'}</span></button>
@@ -111,7 +116,8 @@ export default function App() {
       onSelect={workspace.onSelect} onConfigChange={workspace.onConfigChange} onPreset={workspace.onPreset} onRawChange={workspace.onRawChange}
       onMatchResolutions={workspace.onMatchResolutions} onScan={() => invoke(workspace.scan)} onStart={start} onStop={() => invoke(workspace.stop)}
       feedback={dialog === 'setup' ? feedback : undefined} />
-    <CapturesDialog open={dialog === 'captures'} onClose={() => setDialog(null)} captures={workspace.status?.captures || []}
+    <CapturesDialog open={dialog === 'captures'} onClose={() => setDialog(null)} captures={library.captures}
+      loading={library.loading} busy={workspace.busy} onRefresh={library.refresh} onDownload={library.download} onDelete={library.remove}
       captureDirectory={workspace.status?.capture_directory} feedback={dialog === 'captures' ? feedback : undefined} />
   </div>;
 }

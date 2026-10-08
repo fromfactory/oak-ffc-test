@@ -16,7 +16,9 @@ The browser interface uses **React, TypeScript, Vite, and Tailwind CSS**. Produc
 - Use a dark, compact live workspace with camera switching, capture actions, and tabbed camera controls.
 - Adjust exposure, ISO, white balance, focus, and image-processing controls, including automatic exposure/white-balance locks, an automatic-exposure time limit, lighting presets, and image effects.
 - Save JPEG, PNG, TIFF, BMP, and sensor RAW captures with JSON metadata.
-- Capture individual cameras or all active cameras, and download saved files.
+- Capture individual cameras or all active cameras.
+- Browse all saved images with thumbnails, date/format/category/camera filters, and grouped views.
+- Download selected images or the entire library as a ZIP with metadata, and permanently delete selected or all saved captures from the host.
 - Export technical diagnostics with identifying fields omitted.
 - Explore the interface using synthetic demo cameras without attaching hardware.
 - Connect directly to a Raspberry Pi Wi-Fi hotspot and use the same browser workspace without a router or Internet connection.
@@ -128,7 +130,7 @@ ssh -N -L 8080:127.0.0.1:8080 USER@HOST
 
 Then open **http://127.0.0.1:8080** on the browsing computer. If its local port is occupied, use a different forwarding port, such as `8081:127.0.0.1:8080`.
 
-Binding with `--host 0.0.0.0` permits access from other computers that can reach the host. The application has **no authentication or TLS**: those clients can view images, change camera settings, and download captures. Keep it on a trusted host/network or use the SSH tunnel; do not expose its port directly to the Internet.
+Binding with `--host 0.0.0.0` permits access from other computers that can reach the host. The application has **no authentication or TLS**: those clients can view images, change camera settings, download captures, and permanently delete saved captures. Keep it on a trusted host/network or use the SSH tunnel; do not expose its port directly to the Internet.
 
 ### Automatic startup on Raspberry Pi
 
@@ -261,7 +263,7 @@ Resolution and FPS changes rebuild the pipeline. Exposure duration must fit with
 
 ### Live workspace
 
-The live workspace keeps camera selection, previews, and capture actions together. Setup and saved-capture history open separately, so they do not push the live images down the page. Use **Setup** for camera selection, resolution, FPS, and RAW enablement; use **Captures** to review and download saved files. Close either dialog with its close button or **Escape**.
+The live workspace keeps camera selection, previews, and capture actions together. Setup and saved-capture history open separately, so they do not push the live images down the page. Use **Setup** for camera selection, resolution, FPS, and RAW enablement; use **Captures** to browse, organize, download, and delete saved files. Close either dialog with its close button or **Escape**.
 
 The workspace shows the relevant **Start** or **Stop** action. Camera cards always show frame health and FPS; turn on **Details** to see exposure, ISO, white balance, lens position, and frame counts. Manual inputs appear when you choose a manual mode. Expand **More exposure options**, **More color options**, or **Sharpness & noise** for additional controls.
 
@@ -284,7 +286,13 @@ Color presets and effects change processed previews and stills; they do not alte
 
 ## Captures and RAW data
 
-Captures are saved on the **host computer**, under `--capture-dir` (default: `captures/`). Downloading a file in the browser copies it to the browsing computer; it does not change the host capture directory.
+Captures are saved on the **host computer**, under `--capture-dir` (default: `captures/`). When the app runs on a Raspberry Pi, this is the Pi's storage. Downloading copies files to the browsing device and leaves the saved originals on the host.
+
+Open **Captures** to browse the complete library, including older images. Processed images have thumbnails; RAW cards show a sensor-data placeholder. Expand the filters to narrow the library by capture date, image format, category (**Processed** or **RAW**), or camera. Group images by date, format, category, or camera. Dates and times use the browser's local timezone.
+
+Select individual captures, all captures matching the current filters, or the entire library. **Download selected** creates a ZIP of the selected image files and their `metadata.json` sidecars, with a separate folder for each capture. **Download all saved** includes every saved capture, including images outside the current filters or page. Individual image and metadata downloads remain available on each card. The host needs enough free temporary storage to prepare a ZIP, especially for large RAW batches.
+
+**Delete selected** and **Delete all saved** ask for confirmation before permanently removing the capture folders from the host, including image files and metadata. Cancel leaves the files in place. Delete all saved covers the entire library rather than only the recent or filtered images; captures added by another browser after the confirmation opens are preserved. Deleted files cannot be restored through the app.
 
 | Format | Contents |
 | --- | --- |
@@ -396,7 +404,15 @@ To exercise the browser interface, start a separate demo instance and run the sm
 .venv/bin/python tests/browser_smoke.py http://127.0.0.1:8081
 ```
 
-The browser test uses `/usr/bin/chromium` by default; use `--chromium` to override it. It refuses real-device mode and saves screenshots under `test-results/`.
+The browser tests use `/usr/bin/chromium` by default; use `--chromium` to override it. The workspace smoke test refuses real-device mode and saves screenshots under `test-results/`.
+
+Run the capture-library regression test against its own temporary demo server:
+
+```bash
+.venv/bin/python tests/browser_capture_library.py --url http://127.0.0.1:8082
+```
+
+This command owns the loopback port you provide and fails if it is already in use. It creates synthetic image fixtures in a temporary capture directory, checks desktop/mobile browsing, filtering, selection, ZIP contents, and permanent deletion, and saves screenshots under `test-results/capture-library/`. It never connects to an existing camera server or deletes existing captures. Build the frontend before running either browser test.
 
 For an explicit hardware check, close the running camera application first. Choose sockets and a mode appropriate to the attached modules, for example:
 
@@ -423,5 +439,5 @@ Automated checks cover API validation, hotspot-address browser requests, hotspot
 | `scripts/` | Installation, launcher, and hardware-check tools |
 | `scripts/hotspot.py`, `scripts/run_hotspot.sh` | Persistent Raspberry Pi hotspot management and network-accessible app launcher |
 | `scripts/install_service.py` | One-time systemd registration, hotspot boot setup, and app startup verification |
-| `tests/` | Automated checks and browser smoke test |
+| `tests/` | Automated checks and browser workspace/capture-library regression tests |
 | `captures/`, `test-results/` | Local generated output; excluded from Git |
