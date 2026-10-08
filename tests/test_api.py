@@ -141,6 +141,71 @@ def test_same_origin_and_originless_local_requests_work(api):
     assert not api.client.get("/api/status").json["running"]
 
 
+def test_hotspot_browser_can_use_assets_camera_controls_streams_and_downloads(api, monkeypatch):
+    origin = "http://10.42.0.1:8080"
+    browser = {"base_url": origin, "headers": {"Origin": origin}}
+    page = api.client.get("/", base_url=origin)
+    assert page.status_code == 200
+    assert b'href="/static/style.css"' in page.data
+    assert b'src="/static/app.js"' in page.data
+    for asset in ("/static/style.css", "/static/app.js"):
+        assert api.client.get(asset, base_url=origin).status_code == 200
+
+    assert api.client.post("/api/scan", json={}, **browser).status_code == 200
+    config = {"cameras": [{"socket": "CAM_A", "resolution": "1080p", "fps": 10}],
+              "raw_enabled": True}
+    assert api.client.post("/api/start", json=config, **browser).status_code == 200
+    assert api.client.get("/api/status", base_url=origin).json["running"]
+    settings = {"exposure_mode": "manual", "exposure_us": 8000, "iso": 200}
+    controls = api.client.post("/api/controls/CAM_A", json=settings, **browser)
+    assert controls.status_code == 200
+    assert controls.json == settings
+
+    jpeg = b"preview-frame-from-camera"
+    monkeypatch.setattr(api.backend, "preview", lambda socket: (1, jpeg), raising=False)
+    stream = api.client.get("/stream/CAM_A", base_url=origin, buffered=False)
+    try:
+        assert stream.status_code == 200
+        assert stream.mimetype == "multipart/x-mixed-replace"
+        assert "boundary=frame" in stream.content_type
+        assert stream.headers["Cache-Control"] == "no-store"
+        assert next(iter(stream.response)) == (
+            b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
+            + str(len(jpeg)).encode() + b"\r\n\r\n" + jpeg + b"\r\n")
+    finally:
+        stream.close()
+
+    response = api.client.post("/api/capture", json={"sockets": ["CAM_A"], "format": "raw"},
+                               **browser)
+    assert response.status_code == 200
+    capture, = response.json["captures"]
+    assert api.client.get("/api/captures", base_url=origin).json["captures"] == [capture]
+    for file in capture["files"]:
+        assert file["url"].startswith(f"/captures/{capture['id']}/")
+        download = api.client.get(file["url"], base_url=origin)
+        assert download.status_code == 200
+        assert download.headers["Content-Disposition"].startswith("attachment;")
+        if file["name"] == "image.raw":
+            assert download.data == b"native-camera-bytes"
+        else:
+            assert download.json == capture["metadata"]
+    report = api.client.get("/api/report", base_url=origin)
+    assert report.status_code == 200
+    assert report.json["status"]["running"]
+    assert "attachment" in report.headers["Content-Disposition"]
+    assert api.client.post("/api/stop", json={}, **browser).status_code == 200
+    assert not api.client.get("/api/status", base_url=origin).json["running"]
+
+
+@pytest.mark.parametrize("origin", ["http://localhost:8080", "http://10.42.0.2:8080",
+                                    "http://10.42.0.1:8081"])
+def test_hotspot_rejects_mutations_from_another_host_or_port(api, origin):
+    response = api.client.post("/api/stop", json={}, base_url="http://10.42.0.1:8080",
+                               headers={"Origin": origin})
+    assert response.status_code == 403
+    assert api.backend.calls == []
+
+
 def test_capture_requires_running_selected_camera_and_raw_opt_in(api):
     request = {"sockets": ["CAM_A"], "format": "raw"}
     assert api.client.post("/api/capture", json=request).status_code == 409

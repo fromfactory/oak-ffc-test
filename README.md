@@ -17,6 +17,7 @@ The host computer runs the Python application, communicates with the OAK device,
 - Capture individual cameras or all active cameras, and download saved files.
 - Export technical diagnostics with identifying fields omitted.
 - Explore the interface using synthetic demo cameras without attaching hardware.
+- Connect directly to a Raspberry Pi Wi-Fi hotspot and use the same browser workspace without a router or Internet connection.
 
 ## Current scope and compatibility
 
@@ -124,6 +125,120 @@ ssh -N -L 8080:127.0.0.1:8080 USER@HOST
 Then open **http://127.0.0.1:8080** on the browsing computer. If its local port is occupied, use a different forwarding port, such as `8081:127.0.0.1:8080`.
 
 Binding with `--host 0.0.0.0` permits access from other computers that can reach the host. The application has **no authentication or TLS**: those clients can view images, change camera settings, and download captures. Keep it on a trusted host/network or use the SSH tunnel; do not expose its port directly to the Internet.
+
+### Automatic startup on Raspberry Pi
+
+For everyday use, the flow is **power on the Pi → join its Wi-Fi hotspot → open http://10.42.0.1:8080**. No terminal commands or scripts are needed on the PC or smartphone. Camera selection and capture controls remain in the browser.
+
+After completing the Python installation and USB permissions above, register the application once on the Pi:
+
+```bash
+sudo python3 scripts/install_service.py
+```
+
+Run this from the checkout as your normal application user, using `sudo`. The installer detects that user and the checkout path, enables the saved hotspot at boot, and installs and starts **oak-ffc-test.service**. The application runs as the ordinary user with access to their USB groups and capture directory. The installer also checks that the HTTP API responds before reporting success.
+
+An existing hotspot keeps its SSID, address, and fixed password. If no hotspot exists, the installer creates **OAK-FFC-TEST**, generates a password once, and prints it for you to save. To choose your fixed password during the one-time setup, use:
+
+```bash
+sudo python3 scripts/install_service.py --password 'YOUR_FIXED_PASSWORD'
+```
+
+Use 8–63 printable ASCII characters; `--password-file /path/to/private-password-file` is also supported. When running directly as root, specify the ordinary application account with `--user YOUR_USER`. Use `--port 8081` or `--capture-dir /path/to/captures` if needed. `--demo` installs a service using synthetic cameras for testing; rerun without it for real hardware. Reinstalling with no password option preserves the saved password and updates the service options.
+
+Stop any manually started copy of the app before installation so it can use the chosen port. Use a local keyboard/display or Ethernet for initial setup: enabling the hotspot replaces the Wi-Fi connection on its adapter. NetworkManager must manage an AP-capable adapter, and the Pi's WLAN country must be configured as described below. The installer does not reboot the Pi.
+
+After installation, the app and hotspot start automatically on subsequent boots, without logging in. The app listens on port **8080** by default, including the hotspot interface, and systemd restarts it if it exits with an error. NetworkManager retries hotspot startup if the adapter is not ready yet. Startup does not depend on an Internet connection. Keep the checkout and its `.venv` at the installed path; rerun the installer if you move them.
+
+Maintenance commands are only needed on the Pi when changing the setup:
+
+```bash
+systemctl status oak-ffc-test.service
+sudo systemctl restart oak-ffc-test.service
+journalctl -u oak-ffc-test.service -n 50 --no-pager
+```
+
+To disable automatic app startup and stop it, run `sudo systemctl disable --now oak-ffc-test.service`. Hotspot startup is managed separately; `sudo python3 scripts/hotspot.py stop` stops broadcasting and disables its automatic connection. To restore the complete power-on setup, rerun `sudo python3 scripts/install_service.py`.
+
+### Direct access through a Raspberry Pi hotspot
+
+The Raspberry Pi can broadcast its own **OAK-FFC-TEST** Wi-Fi network. Connect a PC, tablet, or smartphone to it and open **http://10.42.0.1:8080**. The UI, live previews, camera controls, captures, downloads, and diagnostics are the same as on the Pi. All browser assets are served locally, so the app works without Internet access. Captures are stored on the Pi; downloading copies them to the browsing device. Connected browsers share the same camera session and settings.
+
+This setup targets Raspberry Pi OS **Bookworm or Trixie** with NetworkManager and an AP-capable Wi-Fi adapter, normally `wlan0`. NetworkManager manages DHCP, DNS, and optional Internet sharing through its `shared` IPv4 mode; separate `hostapd` or `dnsmasq` services are unnecessary. See the [NetworkManager shared-network documentation](https://networkmanager.pages.freedesktop.org/NetworkManager/NetworkManager/nm-settings-nmcli.html#ipv4-setting).
+
+Run the following commands **on the Pi**, from this checkout. Use a local keyboard/display or Ethernet for the initial setup: starting the hotspot replaces the existing Wi-Fi connection on the selected adapter and can disconnect a Wi-Fi SSH session. Ethernet stays available. If you need Wi-Fi Internet access while broadcasting the hotspot, use a second Wi-Fi adapter; Ethernet can also provide the upstream connection.
+
+1. Check NetworkManager and the Wi-Fi adapter:
+
+   ```bash
+   nmcli general status
+   nmcli device status
+   nmcli -f WIFI-PROPERTIES.AP device show wlan0
+   ```
+
+   The AP capability must be `yes`. If `nmcli` or `dnsmasq` is missing, install the dependencies with `sudo apt-get update` and `sudo apt-get install -y network-manager dnsmasq-base`. On an older OS using `dhcpcd`, use a supported NetworkManager setup before running these tools.
+
+2. Set the WLAN country to the country where the Pi is used, if it has not already been configured: run `sudo raspi-config` and select **Localisation Options → WLAN Country**. Enable the Wi-Fi radio:
+
+   ```bash
+   sudo nmcli radio wifi on
+   ```
+
+   The [Raspberry Pi wireless setup documentation](https://www.raspberrypi.com/documentation/computers/configuration.html#enable-wireless-networking-set-wlan-country) explains country selection and radio enablement.
+
+3. Create the hotspot profile:
+
+   ```bash
+   sudo python3 scripts/hotspot.py configure
+   ```
+
+   On first setup, this command generates a Wi-Fi password and prints it once; save it. Later `configure` calls reuse the saved password when the SSID stays the same. Starting, stopping, or rebooting does not change it. The tool creates a WPA2 network on 2.4 GHz, gives the Pi the fixed address `10.42.0.1/24`, and stores a protected profile outside the checkout. It does not activate Wi-Fi or change the current connection.
+
+   To choose a **fixed password**, set it once with the following command, replacing the placeholder with your own password:
+
+   ```bash
+   sudo python3 scripts/hotspot.py configure --password 'YOUR_FIXED_PASSWORD'
+   ```
+
+   WPA2 requires 8–63 printable ASCII characters. This password is saved and stays the same until you explicitly replace it with `--password` or `--password-file`. If the hotspot is already running, stop it with `sudo python3 scripts/hotspot.py stop` before changing its configuration, then start it again afterward.
+
+   To choose another name or adapter, use `--ssid 'YOUR_SSID' --interface wlan1`. If you change an existing hotspot's SSID, supply the password again with `--password` or `--password-file`; you can use the same password. Alternatively, provide a private file containing the passphrase with `--password-file /path/to/private-password-file`; keep that file outside Git and restrict its permissions. The two password options are mutually exclusive. If `10.42.0.0/24` overlaps another network attached to the Pi, choose another private subnet with `--address 10.43.0.1/24`; changing only the address or adapter reuses the saved password.
+
+4. Start the hotspot and enable its automatic connection after reboot:
+
+   ```bash
+   sudo python3 scripts/hotspot.py start
+   python3 scripts/hotspot.py status
+   ```
+
+5. Stop any existing app instance with **Ctrl+C** in its original terminal, then launch the app with network access:
+
+   ```bash
+   bash scripts/run_hotspot.sh
+   ```
+
+   This launcher reads the configured hotspot address, prints the browser URL, and runs the existing app with a default bind address of `--host 0.0.0.0`. Options such as `--demo`, `--port 8081`, and `--capture-dir captures` work as before; `--host` can override the bind address. By default it also accepts connections through other connected interfaces, including Ethernet; use trusted networks. The equivalent command is `bash scripts/run.sh --host 0.0.0.0`.
+
+6. On the other device, join **OAK-FFC-TEST** using the saved password and open **http://10.42.0.1:8080**, or the address/port you selected. If the device reports **No Internet**, choose to stay connected; the app does not need Internet access. On phones, disable automatic switching to mobile data or another Wi-Fi network if the browser cannot reach the Pi. There is no captive portal, so enter the URL in the browser explicitly.
+
+The hotspot reconnects automatically at boot after a successful `start`. To start the web application automatically as well, use the [one-time service installer](#automatic-startup-on-raspberry-pi) above. Use the manual launcher when testing or changing the setup with the service disabled.
+
+To stop broadcasting and disable hotspot startup at boot:
+
+```bash
+sudo python3 scripts/hotspot.py stop
+```
+
+This preserves the saved hotspot and other network profiles. NetworkManager may reconnect a previously saved Wi-Fi network; otherwise select it from the Pi's network menu or run `sudo nmcli connection up id 'YOUR_PREVIOUS_CONNECTION'`. Start the hotspot again with `sudo python3 scripts/hotspot.py start`.
+
+| Hotspot symptom | Checks |
+| --- | --- |
+| SSID does not appear | Run `python3 scripts/hotspot.py status`, `nmcli radio wifi`, and `rfkill list`. Enable Wi-Fi, set the correct WLAN country, and confirm AP capability on the selected adapter. |
+| Connected but the app does not open | Confirm the app is running with `--host 0.0.0.0`; localhost-only binding does not accept hotspot clients. Use the configured Pi address and app port, and stay connected despite the No Internet message. |
+| Another network uses the same subnet | Stop the hotspot and configure it with another private `/24`, such as `--address 10.43.0.1/24`, then start it again. The saved password is reused when the SSID stays the same. |
+| DHCP or activation fails | Confirm `dnsmasq-base` is installed and inspect `journalctl -u NetworkManager -n 50 --no-pager`. Existing standalone AP/DHCP services can conflict with NetworkManager. |
+| Firewall blocks the browser | If a firewall is enabled, allow TCP on the app port from the hotspot interface/subnet and DHCP/DNS for clients; keep the existing firewall enabled. |
+| App disappears after reboot | Run the service installer and check `systemctl status oak-ffc-test.service` and its journal. Confirm that the checkout and `.venv` remain at the installed path. |
 
 ## A typical test session
 
@@ -264,7 +379,7 @@ For an explicit hardware check, close the running camera application first. Choo
 
 Additional socket names select additional streams within the application's current limit. The script saves processed/RAW samples and a detailed local report under `captures/hardware-checks/`; treat that output as private.
 
-Automated checks cover API validation, capture storage, RAW10 decoding, pipeline construction, lifecycle recovery, compatibility guards, and diagnostic privacy. Demo checks exercise the interface without proving physical hardware compatibility. Previous short hardware checks covered IMX378 color modules, including matching dual 4K and dual 12 MP at 10 FPS with JPEG and RAW capture. These results do not establish support for other modules, every socket combination, or long-duration operation.
+Automated checks cover API validation, hotspot-address browser requests, hotspot profile configuration and recovery, service installation and startup with mocked system commands, capture storage, RAW10 decoding, pipeline construction, lifecycle recovery, compatibility guards, and diagnostic privacy. Demo checks exercise the interface without proving physical hardware compatibility or Wi-Fi radio/client connectivity. Previous short hardware checks covered IMX378 color modules, including matching dual 4K and dual 12 MP at 10 FPS with JPEG and RAW capture. These results do not establish support for other modules, every socket combination, or long-duration operation.
 
 ## Project layout
 
@@ -276,5 +391,7 @@ Automated checks cover API validation, capture storage, RAW10 decoding, pipeline
 | `oak_camera/static/`, `oak_camera/templates/` | Browser interface |
 | `oak_camera/raw.py` | MIPI RAW10 unpacking utility |
 | `scripts/` | Installation, launcher, and hardware-check tools |
+| `scripts/hotspot.py`, `scripts/run_hotspot.sh` | Persistent Raspberry Pi hotspot management and network-accessible app launcher |
+| `scripts/install_service.py` | One-time systemd registration, hotspot boot setup, and app startup verification |
 | `tests/` | Automated checks and browser smoke test |
 | `captures/`, `test-results/` | Local generated output; excluded from Git |
