@@ -8,6 +8,14 @@ build/
 dist/
 *.egg-info/
 
+# Frontend dependencies, generated production assets, and local caches
+node_modules/
+.npm/
+.vite/
+.vite-temp/
+/oak_camera/static/dist/
+*.tsbuildinfo
+
 # Test, coverage, and tool caches
 .pytest_cache/
 .mypy_cache/
@@ -15,8 +23,11 @@ dist/
 .coverage
 .coverage.*
 coverage.xml
+coverage/
 htmlcov/
 .cache/
+playwright-report/
+blob-report/
 
 # Camera images, metadata, hardware reports, and browser screenshots
 # Add custom --capture-dir / --output directories here before committing.

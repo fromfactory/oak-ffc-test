@@ -66,6 +66,44 @@ def api(tmp_path):
                            root=tmp_path / "captures", tmp=tmp_path)
 
 
+@pytest.fixture
+def frontend(api):
+    """Model Vite output without requiring Node for the Python API test suite."""
+    api.app.static_folder = str(api.tmp / "static")
+    output = api.tmp / "static" / "dist"
+    assets = output / "assets"
+    assets.mkdir(parents=True)
+    (assets / "index-test.js").write_text("console.log('synthetic test asset');")
+    (assets / "index-test.css").write_text("body { color: white; }")
+    (output / "index.html").write_text(
+        '<!doctype html><html lang="en"><head><title>OAK FFC TEST</title>'
+        '<link rel="stylesheet" href="/static/dist/assets/index-test.css">'
+        '<script type="module" src="/static/dist/assets/index-test.js"></script>'
+        '</head><body><div id="root"></div></body></html>'
+    )
+    api.app.config["FRONTEND_DIST"] = output
+    return output
+
+
+def test_missing_frontend_explains_build_and_keeps_api_available(api):
+    api.app.config["FRONTEND_DIST"] = api.tmp / "not-built"
+    response = api.client.get("/")
+    assert response.status_code == 503
+    assert response.mimetype == "text/plain"
+    assert b"npm ci && npm run build" in response.data
+    assert response.headers["Cache-Control"] == "no-store"
+    assert api.client.get("/api/status").status_code == 200
+    assert api.backend.calls == []
+
+
+def test_frontend_document_revalidates_after_a_new_build(api, frontend):
+    response = api.client.get("/")
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    (frontend / "index.html").write_text('<!doctype html><div id="root">Updated build</div>')
+    assert b"Updated build" in api.client.get("/").data
+
+
 def start(api, sockets=("CAM_A",), raw=False):
     return api.client.post("/api/start", json={
         "cameras": [{"socket": socket, "resolution": "1080p", "fps": 10} for socket in sockets],
@@ -141,14 +179,14 @@ def test_same_origin_and_originless_local_requests_work(api):
     assert not api.client.get("/api/status").json["running"]
 
 
-def test_hotspot_browser_can_use_assets_camera_controls_streams_and_downloads(api, monkeypatch):
+def test_hotspot_browser_can_use_assets_camera_controls_streams_and_downloads(api, frontend, monkeypatch):
     origin = "http://10.42.0.1:8080"
     browser = {"base_url": origin, "headers": {"Origin": origin}}
     page = api.client.get("/", base_url=origin)
     assert page.status_code == 200
-    assert b'href="/static/style.css"' in page.data
-    assert b'src="/static/app.js"' in page.data
-    for asset in ("/static/style.css", "/static/app.js"):
+    assert b'href="/static/dist/assets/index-test.css"' in page.data
+    assert b'src="/static/dist/assets/index-test.js"' in page.data
+    for asset in ("/static/dist/assets/index-test.css", "/static/dist/assets/index-test.js"):
         assert api.client.get(asset, base_url=origin).status_code == 200
 
     assert api.client.post("/api/scan", json={}, **browser).status_code == 200

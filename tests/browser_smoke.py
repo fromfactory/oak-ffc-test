@@ -83,6 +83,15 @@ def main():
             camera.locator('.fps-input').fill('10')
         page.set_viewport_size({'width': 1366, 'height': 768})
 
+        # Keep configuration edits for an unselected camera through other sessions.
+        camera_b = page.locator('.camera-config[data-socket="CAM_B"]')
+        camera_b.locator('.camera-select').check()
+        camera_b.locator('.resolution-select').select_option('4k')
+        camera_b.locator('.fps-input').fill('13')
+        camera_b.locator('.camera-select').uncheck()
+        expect(camera_b.locator('.resolution-select')).to_be_disabled()
+        expect(camera_b.locator('.fps-input')).to_be_disabled()
+
         # A startup error must be readable and dismissible above the modal.
         page.route('**/api/start', lambda route: route.fulfill(
             status=409, json={'error': 'Synthetic startup failure for UI verification'}), times=1)
@@ -95,6 +104,10 @@ def main():
         for count in (1, 2, 3):
             if not page.locator('#setup-dialog').is_visible():
                 page.locator('#open-setup').click()
+            if count > 1:
+                expect(camera_b.locator('.camera-select')).not_to_be_checked()
+                expect(camera_b.locator('.resolution-select')).to_have_value('4k')
+                expect(camera_b.locator('.fps-input')).to_have_value('13')
             page.locator(f'[data-preset="{count}"]').click()
             if count == 3:
                 page.locator('#raw-enabled').check()
@@ -107,6 +120,11 @@ def main():
             page.wait_for_function("document.querySelectorAll('.preview.has-frame').length === " + str(count))
             page.wait_for_function("[...document.querySelectorAll('.camera-image')].every(i => i.naturalWidth > 0)")
             assert_workspace_fits(page, f'{count} cameras, desktop')
+            if count == 3:
+                running_status = context.request.get(args.url + '/api/status').json()
+                running_b = next(c for c in running_status['cameras'] if c['socket'] == 'CAM_B')
+                assert running_b['resolution'] == '4k', running_b
+                assert running_b['requested_fps'] == 13, running_b
             if count < 3:
                 page.locator('#stop-button').click()
                 expect(page.locator('#pipeline-state')).to_have_text('Stopped')
@@ -189,7 +207,34 @@ def main():
         expect(page.locator('#exposure-mode')).to_have_value('manual')
         expect(page.locator('#manual-exposure-fields')).to_be_visible()
         expect(page.locator('#exposure-number')).to_have_value('5000')
-        apply()
+
+        # A rejected controls request retains its draft for a successful retry.
+        manual_changes = {'exposure_mode': 'manual', 'exposure_us': 5000, 'iso': 200}
+        page.route('**/api/controls/CAM_A', lambda route: route.fulfill(
+            status=409, json={'error': 'Synthetic controls failure for UI verification'}), times=1)
+        with page.expect_response(lambda response: '/api/controls/CAM_A' in response.url) as failed:
+            page.locator('#apply-controls').click()
+        assert failed.value.status == 409
+        assert failed.value.request.post_data_json == manual_changes
+        expect(page.locator('#error-banner')).to_contain_text('Synthetic controls failure')
+        page.wait_for_function("!document.body.classList.contains('busy')")
+        expect(page.locator('#reset-controls')).to_be_enabled()
+        expect(page.locator('#control-dirty')).to_contain_text('Unapplied changes')
+        assert controls()['exposure_mode'] == 'auto'
+        assert controls()['exposure_lock'] is True
+        assert controls()['exposure_us'] == 10000
+        assert controls()['iso'] == 400
+        camera('CAM_D')
+        expect(page.locator('#exposure-mode')).to_have_value('auto')
+        camera('CAM_A')
+        page.wait_for_timeout(1800)
+        expect(page.locator('#exposure-mode')).to_have_value('manual')
+        expect(page.locator('#exposure-number')).to_have_value('5000')
+        expect(page.locator('#iso-number')).to_have_value('200')
+        page.locator('#dismiss-error').click()
+        assert apply() == manual_changes
+        expect(page.locator('#reset-controls')).to_be_disabled()
+        expect(page.locator('#control-dirty')).to_have_text('Settings apply to this camera only.')
         assert controls()['exposure_mode'] == 'manual'
         assert controls()['exposure_lock'] is False
         assert controls()['exposure_us'] == 5000
@@ -336,7 +381,7 @@ def main():
         page.locator('#close-setup').click()
         assert not errors, errors
         browser.close()
-    print('Browser smoke passed: compact layouts, automatic/manual visibility, advanced controls, metadata toggle, dialogs, camera drafts, extended controls, captures/downloads, and restart.')
+    print('Browser smoke passed: compact layouts, automatic/manual visibility, advanced controls, metadata toggle, dialogs, retained setup configurations, camera drafts and failed-request retry, extended controls, captures/downloads, and restart.')
 
 
 if __name__ == '__main__':

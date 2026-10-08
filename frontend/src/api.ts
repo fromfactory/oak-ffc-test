@@ -1,0 +1,30 @@
+import type { CameraControls, CameraStatus, Capture, CaptureFormat, CameraConfig } from './types';
+
+async function request<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(path, body === undefined
+      ? { cache: 'no-store', signal }
+      : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    throw new Error('Cannot reach OAK FFC TEST. Check that the application is running and the host computer is reachable.');
+  }
+  let data: T & { error?: string };
+  try { data = await response.json(); }
+  catch { throw new Error(`The server returned an unreadable response (HTTP ${response.status}).`); }
+  if (!response.ok) throw new Error(data.error || `The request failed (HTTP ${response.status}).`);
+  return data;
+}
+
+export const api = {
+  status: (signal?: AbortSignal) => request<CameraStatus>('/api/status', undefined, signal),
+  scan: () => request<CameraStatus>('/api/scan', {}),
+  start: (cameras: (CameraConfig & { socket: string })[], rawEnabled: boolean) =>
+    request<CameraStatus>('/api/start', { cameras, raw_enabled: rawEnabled }),
+  stop: () => request<CameraStatus>('/api/stop', {}),
+  controls: (socket: string, changes: Partial<CameraControls>) =>
+    request<Partial<CameraControls>>(`/api/controls/${encodeURIComponent(socket)}`, changes),
+  capture: (sockets: string[], format: CaptureFormat) =>
+    request<{ captures: Capture[] }>('/api/capture', { sockets, format }),
+};

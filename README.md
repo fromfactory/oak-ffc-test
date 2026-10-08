@@ -4,6 +4,8 @@ A local browser application for exploring and testing the **OAK-FFC 4P USB platf
 
 The host computer runs the Python application, communicates with the OAK device, and stores images. The browser provides the interface. The project is intended for camera bring-up, module and cable checks, image-quality experiments, and configuration comparisons.
 
+The browser interface uses **React, TypeScript, Vite, and Tailwind CSS**. Production JavaScript and CSS are built locally and served by the Python application, so the workspace works offline without external CDNs.
+
 ![OAK FFC TEST main web panel](docs/images/main.png)
 
 ## Features
@@ -26,7 +28,7 @@ Platform support and application support are different. The OAK-FFC 4P has four 
 | Area | Current implementation |
 | --- | --- |
 | Device | One USB OAK-FFC 4P per application instance |
-| Host | 64-bit Python 3.10 or newer; Linux setup scripts are provided. Hardware testing has used Raspberry Pi OS 64-bit. |
+| Host | 64-bit Python 3.10 or newer; Node.js 22.12+ (22.x) or 24+ with npm to build the UI. Linux setup scripts are provided. Hardware testing has used Raspberry Pi OS 64-bit. |
 | SDK | DepthAI **2.30.0.0**, using the v2 `ColorCamera` pipeline API |
 | Camera selection | Any discovered socket from `CAM_A`, `CAM_B`, `CAM_C`, and `CAM_D`; up to **three active cameras** per session |
 | Sensor support | The capture backend currently accepts **IMX378 color modules only**. Other modules may be discovered, but require additional backend support; mono and depth pipelines are not implemented. |
@@ -76,13 +78,13 @@ sudo udevadm trigger --subsystem-match=usb
 
 Check group membership with `id -nG`. If necessary, run `sudo usermod -aG plugdev "$USER"`, then log out and back in. Reconnect the OAK after applying the rule. Run the application as your ordinary user.
 
-Install the Python dependencies in a project-local environment:
+Install [Node.js](https://nodejs.org/en/download) 24 LTS with npm (`.nvmrc` selects 24 for nvm users; Node 22.12+ in the 22.x series is also supported), then install the Python dependencies and build the browser interface:
 
 ```bash
 bash scripts/install.sh
 ```
 
-The installer creates `.venv` and installs `requirements.txt`. It prints system setup instructions but does not execute `sudo` or modify operating-system settings. Use `PYTHON_BIN=/path/to/python3 bash scripts/install.sh` to choose another interpreter.
+The installer creates `.venv`, installs `requirements.txt`, runs `npm ci`, and builds the UI into `oak_camera/static/dist/`. It prints system setup instructions but does not execute `sudo` or modify operating-system settings. Use `PYTHON_BIN=/path/to/python3 bash scripts/install.sh` to choose another interpreter. Node and npm are build tools; running the completed Python application does not require them or an Internet connection.
 
 Keep the pinned DepthAI version: the application uses the v2 API and is not compatible with an independent upgrade to v3. Availability of a wheel depends on the host architecture and Python version; consult the [DepthAI 2.30.0.0 package files](https://pypi.org/project/depthai/2.30.0.0/).
 
@@ -114,6 +116,8 @@ bash scripts/run.sh --device-id DEVICE_ID
 
 The equivalent Python entry point is `.venv/bin/python -m oak_camera`. Run it with `--help` to list options.
 
+After pulling changes to the frontend, run `npm ci && npm run build` before reloading the browser. If the production build is missing, the homepage displays build instructions while the camera API remains available.
+
 ### Access from another computer
 
 The default bind address is localhost. Use an SSH tunnel for remote viewing, replacing `USER` and `HOST` with your own connection details:
@@ -130,7 +134,7 @@ Binding with `--host 0.0.0.0` permits access from other computers that can reach
 
 For everyday use, the flow is **power on the Pi → join its Wi-Fi hotspot → open http://10.42.0.1:8080**. No terminal commands or scripts are needed on the PC or smartphone. Camera selection and capture controls remain in the browser.
 
-After completing the Python installation and USB permissions above, register the application once on the Pi:
+After completing installation, the frontend build, and USB permissions above, register the application once on the Pi:
 
 ```bash
 sudo python3 scripts/install_service.py
@@ -312,6 +316,7 @@ Capture-all is sequential. Captures from different cameras, and processed and RA
 | Symptom | Checks |
 | --- | --- |
 | Port already in use | Stop the existing server or select another `--port`. |
+| Interface has not been built | Install Node.js 24 LTS with npm, then run `npm ci && npm run build` from the checkout. |
 | No available device | Check power, USB cabling, Linux USB permissions, and whether another program owns the device. |
 | Missing camera | Power off before checking FFC orientation, latches, module compatibility, and the selected socket. |
 | Mixed-resolution warning | Match the modes on `CAM_A` and `CAM_D`, or use **Match resolutions** before starting. |
@@ -354,7 +359,29 @@ Documentation uses placeholders such as `DEVICE_ID`, `USER`, `HOST`, and `CAPTUR
 
 ## Development and validation
 
-Install development dependencies and run the automated checks:
+Install frontend dependencies and check the TypeScript source and production build:
+
+```bash
+npm ci
+npm run typecheck
+npm run build
+```
+
+For development with automatic browser updates, run the demo backend and Vite in separate terminals:
+
+```bash
+# Terminal 1: Python API and synthetic cameras.
+bash scripts/run.sh --demo
+
+# Terminal 2: React development server.
+npm run dev
+```
+
+Open **http://127.0.0.1:5173**. Vite proxies `/api`, `/stream`, and `/captures` to the Python server on port 8080. Browser requests retain their matching `Host` and `Origin`, preserving the API's cross-origin mutation check. To use another backend port, run `OAK_API_PROXY_TARGET=http://127.0.0.1:8081 npm run dev`. Keep API, stream, and download URLs relative to the current browser origin.
+
+For the offline production interface, use `npm run build` and browse the Python server on port 8080. A Vite server is only needed while developing the frontend. The configuration follows the official [Vite backend integration guide](https://vite.dev/guide/backend-integration) and [Tailwind Vite setup](https://tailwindcss.com/docs/installation/using-vite).
+
+Install Python development dependencies and run the automated checks:
 
 ```bash
 .venv/bin/python -m pip install -r requirements-dev.txt
@@ -386,9 +413,12 @@ Automated checks cover API validation, hotspot-address browser requests, hotspot
 | Path | Purpose |
 | --- | --- |
 | `oak_camera/backend.py` | Device discovery, pipelines, controls, and capture |
-| `oak_camera/app.py` | HTTP API, previews, downloads, and diagnostics |
+| `oak_camera/app.py` | HTTP API, previews, downloads, diagnostics, and built UI hosting |
 | `oak_camera/diagnostics.py` | Allowlisted technical diagnostic exports |
-| `oak_camera/static/`, `oak_camera/templates/` | Browser interface |
+| `frontend/src/` | React components, typed API models, and Tailwind styles |
+| `frontend/index.html`, `vite.config.ts`, `tsconfig*.json` | UI entry page, development proxy, production build, and strict TypeScript configuration |
+| `package.json`, `package-lock.json` | Frontend dependencies and reproducible npm build commands |
+| `oak_camera/static/dist/` | Generated offline frontend assets and Vite manifest; excluded from Git |
 | `oak_camera/raw.py` | MIPI RAW10 unpacking utility |
 | `scripts/` | Installation, launcher, and hardware-check tools |
 | `scripts/hotspot.py`, `scripts/run_hotspot.sh` | Persistent Raspberry Pi hotspot management and network-accessible app launcher |

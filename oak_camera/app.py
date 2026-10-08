@@ -10,7 +10,7 @@ import threading
 import time
 from urllib.parse import urlsplit
 
-from flask import Flask, Response, jsonify, render_template, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 
 from . import __version__
@@ -26,6 +26,7 @@ def create_app(backend=None, capture_dir="captures", demo=False, device_id=None)
         backend = CameraBackend(demo=demo, device_id=device_id)
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
+    app.config["FRONTEND_DIST"] = Path(app.static_folder) / "dist"
     store = CaptureStore(capture_dir)
     mutations = threading.Lock()
     events = deque(maxlen=100)
@@ -78,7 +79,21 @@ def create_app(backend=None, capture_dir="captures", demo=False, device_id=None)
 
     @app.get("/")
     def index():
-        return render_template("index.html")
+        # Vite writes all scripts and styles with same-origin /static/dist/ URLs.
+        # The API remains usable when a fresh checkout has not been built yet.
+        frontend = Path(app.config["FRONTEND_DIST"])
+        if not (frontend / "index.html").is_file():
+            return Response(
+                "The camera interface has not been built yet.\n"
+                "From the project directory, run npm ci && npm run build, "
+                "or bash scripts/install.sh. Then reload this page.\n"
+                "Node.js 22.12+ (22.x) or 24+ is required to build the interface.\n",
+                status=503, mimetype="text/plain",
+                headers={"Cache-Control": "no-store"},
+            )
+        response = send_from_directory(frontend, "index.html")
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.get("/api/status")
     def get_status():
