@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { Camera, CameraConfig } from '../types';
 import { Dialog } from './Dialog';
+import { Icon } from './Icon';
 
 export interface SetupDialogProps {
   open: boolean;
@@ -46,18 +47,18 @@ export function SetupDialog({
           <h2 id="setup-heading">Camera configuration <span className="subtle" id="selection-count">{selected.size} selected</span></h2>
         </div>
         <button type="button" className="icon-button" id="close-setup" data-close-dialog
-          aria-label="Close camera setup" onClick={onClose}>×</button>
+          aria-label="Close camera setup" onClick={onClose}><Icon name="close" /></button>
       </div>
       <div className="dialog-scroll">
         <div className="device-details">
           <span id="device-id">{deviceId ? `ID ${deviceId}` : 'Connect the OAK device over USB'}</span>
           <span id="camera-count">{cameras.length} detected</span>
-          <a href="/api/report" className="diagnostics-link" download>Download diagnostics ↗</a>
+          <a href="/api/report" className="diagnostics-link" download>Download diagnostics <Icon name="download" /></a>
         </div>
         <div className="configuration-toolbar">
           <p>Select up to three cameras.</p>
           <button type="button" className="button button-quiet button-small" id="scan-button"
-            disabled={locked} onClick={onScan}>↻ Scan cameras</button>
+            disabled={locked} onClick={onScan}><Icon name="refresh" />Scan cameras</button>
         </div>
         <div className="configuration-tools">
           <div className="configuration-action-row">
@@ -79,7 +80,7 @@ export function SetupDialog({
         </div>
         <div className="camera-configs" id="camera-configs">
           {cameras.length === 0 && <div className="discovery-empty">
-            <span className="empty-icon" aria-hidden="true">◎</span>
+            <span className="empty-icon" aria-hidden="true"><Icon name="camera" className="icon-placeholder" /></span>
             <p>No cameras discovered. Check power and USB, then scan again.</p>
           </div>}
           {cameras.map((camera) => {
@@ -96,7 +97,7 @@ export function SetupDialog({
                     <input type="checkbox" className="camera-select" aria-label={`Select ${label}`}
                       checked={isSelected} disabled={locked}
                       onChange={(event) => onSelect(camera.socket, event.currentTarget.checked)} />
-                    <span className="config-icon" aria-hidden="true">◉</span>
+                    <span className="config-icon" aria-hidden="true"><Icon name="camera" /></span>
                     <span>
                       <strong className="config-label" title={label}>{label}</strong>
                       <small className="config-sensor">{camera.sensor || 'Unknown sensor'} · {camera.autofocus === true

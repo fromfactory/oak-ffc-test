@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Camera, CaptureFormat } from '../types';
 import { metadataText, resolutionLabels, socketLabel } from '../utils';
+import { Icon } from './Icon';
 
 export function CaptureFormatSelect({ id, className, value, disabled, rawAvailable, label, onChange }: {
   id?: string; className?: string; value: CaptureFormat; disabled: boolean; rawAvailable: boolean;
@@ -46,7 +47,7 @@ function CameraCard({ camera, selected, busy, epoch, format, rawAvailable, onSel
       <img className="camera-image" alt={`${socketLabel(camera.socket)} live preview`}
         src={`/stream/${encodeURIComponent(camera.socket)}?session=${epoch}&retry=${retry}`}
         onError={() => setFailed(true)} onLoad={() => setFailed(false)} />
-      <div className="preview-placeholder"><span aria-hidden="true">◎</span>
+      <div className="preview-placeholder"><Icon name="camera" className="icon-placeholder" />
         <span className="preview-message">{failed ? 'Preview disconnected. Waiting to reconnect…' : 'Waiting for first frame'}</span>
       </div>
       <span className="preview-resolution" title="Sensor mode; the live preview is downscaled">
@@ -57,7 +58,7 @@ function CameraCard({ camera, selected, busy, epoch, format, rawAvailable, onSel
           event.stopPropagation();
           if (!previewRef.current?.requestFullscreen) { onError('Fullscreen is not supported by this browser.'); return; }
           void previewRef.current.requestFullscreen().catch(cause => onError(`Could not open fullscreen: ${String(cause)}`));
-        }}>⛶</button>
+        }}><Icon name="fullscreen" /></button>
     </div>
     <div className="camera-telemetry">
       <span className={`frame-state ${stale ? 'stale' : ''}`}>{!frames ? 'Waiting for frames' : stale
@@ -70,7 +71,7 @@ function CameraCard({ camera, selected, busy, epoch, format, rawAvailable, onSel
       <CaptureFormatSelect className="camera-format" label={`${socketLabel(camera.socket)} capture format`}
         value={effectiveFormat} disabled={busy} rawAvailable={rawAvailable} onChange={setCameraFormat} />
       <button type="button" className="button button-capture capture-button" disabled={busy}
-        aria-label={`Capture image from ${socketLabel(camera.socket)}`} onClick={() => onCapture(effectiveFormat)}>Capture image ↓</button>
+        aria-label={`Capture image from ${socketLabel(camera.socket)}`} onClick={() => onCapture(effectiveFormat)}>Capture image <Icon name="download" /></button>
     </div>
   </article>;
 }
@@ -101,14 +102,14 @@ export function CameraViewer({ streams, activeSocket, busy, epoch, format, rawAv
         </div>
         <button type="button" id="toggle-details" className="details-button" aria-pressed={details}
           title="Show frame metadata" onClick={() => setDetails(value => !value)}>
-          <svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M5 12h14M5 18h14" /><circle cx="8" cy="6" r="2" /><circle cx="16" cy="12" r="2" /><circle cx="10" cy="18" r="2" /></svg><span>Details</span>
+          <Icon name="settings" /><span>Details</span>
         </button>
       </div>
     </div>
     <div className={`camera-gallery ${streams.length <= 1 ? 'single' : ''} ${selectedView ? 'selected-view' : ''}`}
       id="camera-gallery" aria-label="Live camera previews" data-count={streams.length}>
       {!streams.length && <div className="workspace-empty" id="workspace-empty">
-        <div className="lens-illustration" aria-hidden="true">◎</div><h2>Ready when you are.</h2>
+        <div className="lens-illustration" aria-hidden="true"><Icon name="camera" className="icon-placeholder" /></div><h2>Ready when you are.</h2>
         <p>Choose up to three cameras in Setup, then start the streams.</p>
         <button type="button" className="button button-primary" data-open-setup onClick={onSetup}>Configure cameras</button>
       </div>}

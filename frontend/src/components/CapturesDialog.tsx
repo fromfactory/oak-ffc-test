@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Capture, CaptureSelection } from '../types';
 import { socketLabel } from '../utils';
 import { Dialog } from './Dialog';
+import { Icon } from './Icon';
 import './captures.css';
 
 export interface CapturesDialogProps {
@@ -84,10 +85,7 @@ function CapturePreview({ capture }: { capture: Capture }) {
     {!isRaw && !failed ? <img src={`/captures/${encodeURIComponent(capture.id)}/thumbnail`}
       alt={`${socketLabel(capture.socket)} capture preview`} loading="lazy" decoding="async"
       onError={() => setFailed(true)} /> : <div className="capture-preview-placeholder" aria-hidden="true">
-      <svg viewBox="0 0 48 48" fill="none"><path d="M12 5h17l8 8v29H12zM29 5v10h8" />
-        {isRaw ? <path d="M18 23h13M18 28h13M18 33h8" />
-          : <><circle cx="21" cy="23" r="3" /><path d="m16 35 8-8 4 4 4-3 3 7" /></>}
-      </svg>
+      <Icon name={isRaw ? 'file' : 'image'} />
       <strong>{formatLabel(capture)}</strong><span>{isRaw ? 'Unprocessed sensor data' : 'Preview unavailable'}</span>
     </div>}
     <span className="capture-format-badge">{formatLabel(capture)}</span>
@@ -235,7 +233,7 @@ export function CapturesDialog({
             <p className="capture-library-description">Browse your captures, download a collection, or free up space.</p>
           </div>
           <button type="button" className="icon-button" id="close-captures" data-close-dialog
-            aria-label="Close capture library" disabled={busy || pending !== null} onClick={requestClose}>×</button>
+            aria-label="Close capture library" disabled={busy || pending !== null} onClick={requestClose}><Icon name="close" /></button>
         </div>
 
         <div className="capture-library-overview">
@@ -260,11 +258,12 @@ export function CapturesDialog({
           <button type="button" className={`button button-quiet ${filtersOpen ? 'capture-filter-active' : ''}`}
             id="toggle-capture-filters" aria-expanded={filtersOpen} aria-controls="capture-library-filters"
             disabled={locked} onClick={() => setFiltersOpen((value) => !value)}>
-            Filters{activeFilters > 0 && <span className="count-badge">{activeFilters}</span>}
+            <Icon name="filter" />Filters{activeFilters > 0 && <span className="count-badge">{activeFilters}</span>}
           </button>
           <button type="button" className="button button-quiet capture-refresh-button" id="refresh-captures"
             disabled={locked} onClick={() => void runAction('refresh', onRefresh)}>
-            {loading || pending === 'refresh' ? 'Loading…' : '↻ Refresh'}
+            <Icon name="refresh" className={loading || pending === 'refresh' ? 'icon-loading' : ''} />
+            {loading || pending === 'refresh' ? 'Loading…' : 'Refresh'}
           </button>
         </div>
 
@@ -316,10 +315,10 @@ export function CapturesDialog({
 
           <div id="capture-list" className="capture-library-gallery" aria-busy={loading}>
             {loading && captures.length === 0 ? <div className="capture-library-empty" id="capture-library-loading" role="status">
-              <span className="capture-empty-symbol" aria-hidden="true">◷</span>
+              <span className="capture-empty-symbol" aria-hidden="true"><Icon name="clock" className="icon-placeholder" /></span>
               <h3>Loading your library</h3><p>Reading saved captures from the host.</p>
             </div> : filtered.length === 0 ? <div className="capture-library-empty">
-              <span className="capture-empty-symbol" aria-hidden="true">▧</span>
+              <span className="capture-empty-symbol" aria-hidden="true"><Icon name="image" className="icon-placeholder" /></span>
               <h3>{captures.length === 0 ? 'Your library starts here' : 'No images match these filters'}</h3>
               <p>{captures.length === 0 ? 'Capture an image to save it here with its metadata.'
                 : 'Choose another date, format, category, or camera.'}</p>
@@ -377,14 +376,14 @@ export function CapturesDialog({
             <button type="button" className="button button-primary" id="download-selected-captures"
               disabled={locked || selected.size === 0}
               onClick={() => void runAction('download', () => onDownload({ ids: [...selected] }))}>
-              Download selected</button>
+              <Icon name="download" className="capture-action-icon" />Download selected</button>
             <button type="button" className="button capture-delete-button" id="delete-selected-captures"
-              disabled={locked || selected.size === 0} onClick={() => requestDelete(false)}>Delete selected</button>
+              disabled={locked || selected.size === 0} onClick={() => requestDelete(false)}><Icon name="trash" className="capture-action-icon" />Delete selected</button>
             <button type="button" className="button" id="download-all-captures"
               disabled={locked || captures.length === 0}
-              onClick={() => void runAction('download', () => onDownload({ all: true }))}>Download all saved</button>
+              onClick={() => void runAction('download', () => onDownload({ all: true }))}><Icon name="download" className="capture-action-icon" />Download all saved</button>
             <button type="button" className="button capture-delete-button" id="delete-all-captures"
-              disabled={locked || captures.length === 0} onClick={() => requestDelete(true)}>Delete all saved</button>
+              disabled={locked || captures.length === 0} onClick={() => requestDelete(true)}><Icon name="trash" className="capture-action-icon" />Delete all saved</button>
           </div>
           {pending === 'download' && <p className="capture-action-progress" role="status">Preparing your ZIP download…</p>}
         </div>
@@ -394,7 +393,7 @@ export function CapturesDialog({
         role="alertdialog" aria-modal="true" aria-labelledby="capture-delete-heading"
         aria-describedby="capture-delete-description">
         <div className="capture-confirmation-card">
-          <span className="capture-confirmation-icon" aria-hidden="true">×</span>
+          <span className="capture-confirmation-icon" aria-hidden="true"><Icon name="trash" /></span>
           <h3 id="capture-delete-heading">Permanently delete {confirmation.ids.length} {confirmation.ids.length === 1 ? 'image' : 'images'}?</h3>
           <p id="capture-delete-description">{confirmation.all ? 'The images saved when you chose Delete all'
             : 'These selected images'}

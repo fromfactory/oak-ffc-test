@@ -3,6 +3,7 @@ import { CameraViewer, CaptureFormatSelect } from './components/CameraViewer';
 import { CapturesDialog } from './components/CapturesDialog';
 import { ControlsPanel } from './components/ControlsPanel';
 import { SetupDialog } from './components/SetupDialog';
+import { Icon } from './components/Icon';
 import { useCameraWorkspace } from './hooks/useCameraWorkspace';
 import { useCaptureLibrary } from './hooks/useCaptureLibrary';
 import type { CaptureFormat } from './types';
@@ -49,7 +50,7 @@ export default function App() {
     <div className="notice" id="notice" role="status" hidden={!workspace.notice}>{workspace.notice}</div>
     <div className="alert alert-error" id="error-banner" role="alert" hidden={!workspace.error}>
       <span id="error-text">{workspace.error}</span><button type="button" className="icon-button" id="dismiss-error"
-        aria-label="Dismiss error" onClick={workspace.dismissError}>×</button>
+        aria-label="Dismiss error" onClick={workspace.dismissError}><Icon name="close" /></button>
     </div>
   </div>;
 
@@ -63,15 +64,15 @@ export default function App() {
       </div>
       <nav className="header-actions" aria-label="Workspace actions">
         <button type="button" className="button button-header" id="open-setup" aria-haspopup="dialog" onClick={() => setDialog('setup')}>
-          <svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6m8 4v6" /></svg>Setup
+          <Icon name="settings" />Setup
         </button>
         <button type="button" className="button button-header" id="open-captures" aria-haspopup="dialog" onClick={() => { workspace.dismissError(); setDialog('captures'); }}>
-          <svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2-3h9v16H3z" /></svg>Captures <span className="count-badge" id="capture-count">{dialog === 'captures' && library.loaded ? library.captures.length : workspace.status?.capture_count ?? workspace.status?.captures.length ?? 0}</span>
+          <Icon name="folder" />Captures <span className="count-badge" id="capture-count">{dialog === 'captures' && library.loaded ? library.captures.length : workspace.status?.capture_count ?? workspace.status?.captures.length ?? 0}</span>
         </button>
         <button type="button" className="button button-stop" id="stop-button" hidden={showStart} disabled={workspace.busy || !running}
-          onClick={() => invoke(workspace.stop)}><span aria-hidden="true">■</span><span>{workspace.streamAction === 'stop' ? 'Stopping…' : 'Stop'}</span></button>
+          onClick={() => invoke(workspace.stop)}><Icon name="stop" className="icon-stop" /><span>{workspace.streamAction === 'stop' ? 'Stopping…' : 'Stop'}</span></button>
         <button type="button" className="button button-primary" id="start-button" hidden={!showStart} disabled={!canStart}
-          onClick={start}><span aria-hidden="true">▶</span><span>{workspace.streamAction === 'start' ? 'Starting…' : 'Start'}</span></button>
+          onClick={start}><Icon name="play" className="icon-play" /><span>{workspace.streamAction === 'start' ? 'Starting…' : 'Start'}</span></button>
       </nav>
     </header>
     <div className="status-bar" aria-label="Device status">
@@ -102,7 +103,7 @@ export default function App() {
         <button type="button" id="capture-selected" className="button button-primary" disabled={workspace.busy || !workspace.activeSocket}
           aria-label={workspace.activeSocket ? `Capture selected camera ${socketLabel(workspace.activeSocket)}` : 'Capture selected camera'}
           onClick={() => invoke(() => workspace.capture([workspace.activeSocket], effectiveFormat))}>
-          <svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h4l2-3h6l2 3h4v13H3z" /><circle cx="12" cy="13" r="4" /></svg>Capture selected
+          <Icon name="camera" />Capture selected
         </button>
         <button type="button" id="capture-all" className="button" disabled={workspace.busy || !workspace.streams.length}
           onClick={() => invoke(() => workspace.capture(workspace.streams.map(camera => camera.socket), effectiveFormat))}>Capture all</button>
